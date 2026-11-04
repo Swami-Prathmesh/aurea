@@ -224,7 +224,8 @@
   /* ------------------------------------------------------------------ */
   /* 3. Prompt parsing                                                   */
   /* ------------------------------------------------------------------ */
-  function parsePrompt(text, rng) {
+  function parsePrompt(text, rng, opts) {
+    opts = opts || {};
     rng = rng || makeRng(String(text || ''));
     const raw = String(text || '');
     const t = ' ' + raw.toLowerCase().replace(/[^\w\s#-]/g, ' ').replace(/\s+/g, ' ') + ' ';
@@ -237,13 +238,15 @@
       }
       if (score > found.moodScore) { found.mood = m; found.moodScore = score; }
     }
-    const mood = found.mood || (rng.chance(0.5) ? MOODS[1] : MOODS[0]);
+    let mood = found.mood || (rng.chance(0.5) ? MOODS[1] : MOODS[0]);
+    const moodFromText = !!found.mood;
 
     // ---- form
     let form = null;
     for (const f of FORMS) {
       if (f.words.some((w) => t.indexOf(w) >= 0)) { form = f; break; }
     }
+    const formFromText = !!form;
     if (!form) {
       const preferred = {
         melancholic: ['nocturne', 'aria', 'adagio'],
@@ -285,6 +288,7 @@
     else if (modeName === 'minor') mode = rng.chance(0.3) ? 'harmonicMinor' : 'minor';
     else mode = rng.pick(mood.modes);
     // church modes only when no explicit key quality was given
+    const modeFromText = !!modeName;
     if (!modeName && (mode === 'lydian' || mode === 'mixolydian' || mode === 'phrygian' || mode === 'dorian') && rng.chance(0.45)) {
       mode = (mode === 'phrygian' || mode === 'dorian') ? 'minor' : 'major';
     }
@@ -318,6 +322,7 @@
       }
       if (hits.length) instruments = hits.slice(0, 6);
     }
+    const instFromText = instruments.length > 0;
     if (!instruments.length) {
       instruments = rng.pick([
         ['piano'], ['violin', 'piano'], ['cello', 'piano'], ['violin', 'viola', 'cello'],
@@ -338,6 +343,33 @@
     if (/\b(soft|quiet|whisper|pianissimo|delicate|subtle)\b/.test(t)) dynScale = 0.72;
     if (/\b(loud|powerful|thunder|fortissimo|blazing|mighty)\b/.test(t)) dynScale = 1.2;
     if (/\b(staccato|detache|detach|short|plucked|pizzicato)\b/.test(t)) dynScale *= 0.95;
+
+    // ---- learned priors: what this instrument has been taught about these words
+    const L = opts.learned;
+    if (L) {
+      if (!moodFromText && L.moodId) {
+        const m = MOODS.find((x) => x.id === L.moodId);
+        if (m) mood = m;
+      }
+      if (!formFromText && L.formId) {
+        const f = FORMS.find((x) => x.id === L.formId);
+        if (f) form = f;
+      }
+      if (!modeFromText && L.mode && MODES[L.mode]) mode = L.mode;
+      if (!instFromText && L.instruments && L.instruments.length) instruments = L.instruments.slice();
+      if (L.tempo && L.strength > 0.5) tempo = Math.round(clamp(tempo * 0.6 + L.tempo * 0.4, 38, 190));
+    }
+
+    // ---- explicit overrides (used to reproduce a shared piece exactly)
+    const F = opts.force;
+    if (F) {
+      if (F.moodId) { const m = MOODS.find((x) => x.id === F.moodId); if (m) mood = m; }
+      if (F.formId) { const f = FORMS.find((x) => x.id === F.formId); if (f) form = f; }
+      if (F.mode && MODES[F.mode]) mode = F.mode;
+      if (typeof F.tonic === 'number') tonic = F.tonic;
+      if (F.tempo) tempo = F.tempo;
+      if (F.instruments && F.instruments.length) instruments = F.instruments.slice();
+    }
 
     const articWord = /\b(staccato|pizzicato|plucked)\b/.test(t) ? 'staccato'
       : /\b(marcato|accent|accented|punchy)\b/.test(t) ? 'marcato'
@@ -690,7 +722,7 @@
     options = options || {};
     const seedStr = String(promptText || '') + '::' + (options.seed != null ? options.seed : '');
     const rng = makeRng(seedStr);
-    const P = parsePrompt(promptText, rng);
+    const P = parsePrompt(promptText, rng, { learned: options.learned, force: options.force });
     P.meterBeats = P.form.meter[0];
     P.meterUnit = P.form.meter[1];
 
