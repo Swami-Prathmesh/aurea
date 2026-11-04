@@ -7,6 +7,8 @@
   const E = window.AureaEngine;
   const S = window.AureaSynth;
   const M = window.AureaMidi;
+  const L = window.AureaL;
+  L.init(E);
 
   const $ = (id) => document.getElementById(id);
   const promptEl = $('prompt');
@@ -29,6 +31,7 @@
   ];
 
   let comp = null;
+  let session = null;   // the piece on the stand, and what it is teaching us
   let player = new S.Player();
   let playing = false;
   let position = 0;
@@ -56,6 +59,8 @@
       status('Describe the music first — a mood, an instrument, a key.');
       return;
     }
+    settleSession();                        // judge what we just heard, before replacing it
+
     const duration = parseInt($('duration').value, 10);
     const keep = $('seedMode').value === 'keep';
     const seed = keep && comp ? comp.meta.seed : Math.floor(Math.random() * 1e9);
@@ -65,19 +70,103 @@
     position = 0;
     updatePlayIcon();
 
+    const learned = L.hints(text);
     const t0 = performance.now();
-    comp = E.compose(text, { duration, seed });
+    let fresh = E.compose(text, { duration, seed, learned });
+
+    // if this exact shape was rejected recently, take a different road
+    let detour = false;
+    if (L.isDisliked(fresh.meta)) {
+      const alt = L.alternative(fresh.meta);
+      if (alt) {
+        fresh = E.compose(text, { duration, seed: seed + 1, learned, force: alt });
+        detour = true;
+      }
+    }
     const ms = Math.round(performance.now() - t0);
+    comp = fresh;
 
     player.load(comp);
     paintMeta(ms);
     dirty = true;
     enable(true);
-    status('Composed in ' + ms + ' ms — press play.');
-    setHash(text, comp.meta.seed);
+    $('feedback').hidden = false;
+
+    session = { prompt: text, meta: comp.meta, started: Date.now(), listened: 0, rewarded: false };
+
+    const bits = ['Composed in ' + ms + ' ms'];
+    if (learned && learned.words && learned.words.length) {
+      bits.push('recalled “' + learned.words.slice(0, 3).join('”, “') + '”');
+    }
+    if (detour) bits.push('steered away from the form you passed on');
+    status(bits.join(' · ') + ' — press play.');
+    setHash(text, comp.meta.seed, comp.meta);
+    renderKnowledge();
 
     // start immediately on user gesture (this click is one)
     play();
+  }
+
+  /* ---------------- learning from use ---------------- */
+  function credit(reward) {
+    if (!session || session.rewarded) return;
+    session.rewarded = true;
+    L.learn(session.prompt, session.meta, reward + 0.15);
+    renderKnowledge();
+  }
+
+  // Passive judgement: was it heard out, or skipped straight past?
+  function settleSession() {
+    if (!session || session.rewarded) return;
+    const dur = session.meta.duration || 60;
+    const elapsed = (Date.now() - session.started) / 1000;
+    let reward = 0;
+    if (session.listened >= dur * 0.6) reward = 0.7;        // heard it through
+    else if (session.listened < 6 && elapsed > 4) reward = -0.4;  // skipped it
+    session.rewarded = true;
+    L.learn(session.prompt, session.meta, reward + 0.15);
+    renderKnowledge();
+  }
+
+  function moreLikeThis() {
+    if (!comp) return;
+    credit(1.2);
+    generate();
+    status('Noted — more in this direction. Each one teaches it a little more.');
+  }
+
+  function notThis() {
+    if (!comp) return;
+    credit(-1.0);
+    generate();
+    status('Noted — steering away from that shape.');
+  }
+
+  function renderKnowledge() {
+    const st = L.stats();
+    $('kCount').textContent = st.pieces + (st.pieces === 1 ? ' piece' : ' pieces') +
+      ' · ' + st.words + ' word' + (st.words === 1 ? '' : 's');
+    $('kToggle').textContent = 'Learning: ' + (st.enabled ? 'on' : 'off');
+    $('kToggle').classList.toggle('off', !st.enabled);
+
+    const bits = [];
+    if (st.topMood) bits.push('leans <b>' + st.topMood + '</b>');
+    if (st.topForm) bits.push('often <b>' + st.topForm + '</b>');
+    if (st.topInst) bits.push('likes <b>' + st.topInst.replace(/\+/g, ' + ') + '</b>');
+    if (st.likes) bits.push(st.likes + ' kept');
+    if (st.dislikes) bits.push(st.dislikes + ' passed on');
+    $('kStats').innerHTML = bits.length ? bits.join(' · ') : 'Nothing learned yet — compose something.';
+
+    if (st.strong.length) {
+      $('kWords').innerHTML = st.strong.map((w) => {
+        const good = w.r > 0;
+        const hint = [w.mood, w.form, w.tempo ? w.tempo + 'bpm' : null].filter(Boolean).join(', ');
+        return '<span class="kw ' + (good ? 'pos' : 'neg') + '" title="' + w.n + ' uses, weight ' + w.r + '">' +
+          w.w + (hint ? ' <i>' + hint + '</i>' : '') + '</span>';
+      }).join('');
+    } else {
+      $('kWords').innerHTML = '<span class="kw none">the words it keeps an ear out for will appear here</span>';
+    }
   }
 
   function paintMeta(ms) {
@@ -106,6 +195,7 @@
     updatePlayIcon();
     player.onTick = (t) => {
       position = t;
+      if (session && t > session.listened) session.listened = t;
       const pct = Math.min(100, (t / comp.meta.duration) * 100);
       $('progressFill').style.width = pct + '%';
       $('tNow').textContent = fmt(t);
@@ -169,6 +259,7 @@
       clearInterval(tick);
       download(blob, slug(comp.meta.title) + '.wav');
       status('Saved ' + (blob.size / 1048576).toFixed(1) + ' MB of WAV audio.');
+      credit(0.8);
     } catch (err) {
       clearInterval(tick);
       status('Audio export failed in this browser: ' + err.message);
@@ -181,11 +272,14 @@
     if (!comp) return;
     download(M.write(comp), slug(comp.meta.title) + '.mid');
     status('MIDI score saved — open it in any notation app.');
+    credit(0.6);
   }
 
   function share() {
     if (!comp) return;
-    const url = location.origin + location.pathname + '?p=' + encodeURIComponent(comp.meta.prompt) + '&s=' + comp.meta.seed;
+    const url = location.origin + location.pathname + '?p=' + encodeURIComponent(comp.meta.prompt) +
+      '&s=' + comp.meta.seed + '&k=' + L.fingerprint(comp.meta);
+    credit(0.6);
     navigator.clipboard.writeText(url).then(
       () => status('Link copied — it reproduces this exact piece.'),
       () => status(url)
@@ -310,9 +404,10 @@
   }
   function status(msg) { $('status').textContent = msg || ''; }
 
-  function setHash(p, seed) {
+  function setHash(p, seed, meta) {
     try {
-      history.replaceState(null, '', location.pathname + '?p=' + encodeURIComponent(p) + '&s=' + seed);
+      const k = meta ? '&k=' + L.fingerprint(meta) : '';
+      history.replaceState(null, '', location.pathname + '?p=' + encodeURIComponent(p) + '&s=' + seed + k);
     } catch (e) { /* file:// or blocked */ }
   }
 
@@ -328,6 +423,38 @@
   $('dlWav').addEventListener('click', downloadWav);
   $('dlMidi').addEventListener('click', downloadMidi);
   $('share').addEventListener('click', share);
+  $('like').addEventListener('click', moreLikeThis);
+  $('dislike').addEventListener('click', notThis);
+
+  $('kToggle').addEventListener('click', () => {
+    L.setEnabled(!L.isEnabled());
+    renderKnowledge();
+    status(L.isEnabled() ? 'Learning is on — every prompt teaches it.' : 'Learning is off — nothing is being recorded.');
+  });
+  $('kExport').addEventListener('click', () => {
+    download(new Blob([L.exportJSON()], { type: 'application/json' }), 'aurea-knowledge.json');
+    status('Knowledge exported — import it on another device to carry it over.');
+  });
+  $('kImport').addEventListener('click', () => $('kFile').click());
+  $('kFile').addEventListener('change', (ev) => {
+    const file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const ok = L.importJSON(String(reader.result));
+      renderKnowledge();
+      status(ok ? 'Knowledge merged into this device.' : 'That file was not an AUREA knowledge export.');
+    };
+    reader.readAsText(file);
+    ev.target.value = '';
+  });
+  $('kReset').addEventListener('click', () => {
+    if (confirm('Forget everything AUREA has learned on this device? This cannot be undone.')) {
+      L.reset();
+      renderKnowledge();
+      status('Memory cleared — it starts from nothing again.');
+    }
+  });
 
   document.addEventListener('keydown', (ev) => {
     const typing = document.activeElement === promptEl;
@@ -346,16 +473,21 @@
     const p = q.get('p');
     if (p) {
       promptEl.value = p;
-      const s = parseInt(q.get('s'), 10);
+      const sd = parseInt(q.get('s'), 10);
+      const kRaw = q.get('k');
+      const force = kRaw ? L.unfingerprint(kRaw) : null;
       const duration = parseInt($('duration').value, 10);
-      comp = E.compose(p, { duration, seed: isFinite(s) ? s : undefined });
+      comp = E.compose(p, { duration, seed: isFinite(sd) ? sd : undefined, force: force || undefined });
       player.load(comp);
       paintMeta(0);
       enable(true);
+      $('feedback').hidden = false;
       dirty = true;
       status('Shared piece loaded — press play.');
     }
   })();
+
+  renderKnowledge();
 
   requestAnimationFrame(loop);
 })();
