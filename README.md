@@ -82,6 +82,35 @@ No samples, no downloads. Instruments are synthesised from Web Audio primitives:
 * **MIDI** export (SMF type 1, one track per instrument) for use in any notation app.
 * Shareable links that encode the prompt and seed.
 
+## It learns from you (`learn.js`)
+
+Every prompt is a training example. A small model lives in `localStorage` and updates
+itself on every use — no server, no upload, no account.
+
+* **Word memory** — each prompt token accumulates signed evidence for the musical
+  parameters of the pieces it produced: mood, form, mode, tempo and instrumentation.
+  Write *"a rainy window in november"* and keep what comes back, and those three words
+  become cues that steer later prompts. Reject one and the evidence goes negative, so
+  the word stops pulling in that direction.
+* **Preference weights** — running scores over moods, forms, modes and instruments, used
+  when a prompt is ambiguous.
+* **Regret** — fingerprints of recently rejected pieces. If a new prompt would land on a
+  shape you just passed on, it deliberately takes a different form or mode instead.
+
+Signals come from behaviour, not just buttons: hearing a piece past 60% counts as
+approval, skipping it within a few seconds counts as rejection, and exporting WAV/MIDI or
+sharing counts as strong approval. **More like this** and **Not this** are the explicit
+version. Every prompt contributes at least a small positive weight, so the vocabulary
+grows even without feedback.
+
+The **What it has learned here** panel shows the words it is tracking, the moods and forms
+it leans toward, and lets you export the model as JSON, import it on another device,
+switch learning off, or forget everything. Because it is exportable, knowledge can be
+merged between devices — the beginnings of a shared vocabulary without a backend.
+
+Shared links carry the resolved parameters in the URL, so a piece reproduces exactly even
+on a device with a different memory.
+
 ## Running locally
 
 No build step, no dependencies. Serve the folder over any static server:
