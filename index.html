@@ -76,6 +76,7 @@
       </div>
       <div class="instruments" id="mInst"></div>
     </div>
+
   </section>
 
   <section class="panel stage">
@@ -105,14 +106,39 @@
       <button id="dlMidi" class="btn ghost" disabled title="Download the score as MIDI">MIDI</button>
       <button id="share" class="btn ghost" disabled title="Copy a link to this exact piece">Share</button>
     </div>
+    <div class="feedback" id="feedback" hidden>
+      <button id="like" class="btn ghost fb">&#9829; More like this</button>
+      <button id="dislike" class="btn ghost fb">&#10005; Not this</button>
+      <span class="fb-hint">every choice trains it</span>
+    </div>
     <div class="status" id="status"></div>
+
+    <details class="knowledge" id="knowledge">
+      <summary>
+        <span class="k-title">What it has learned here</span>
+        <span class="k-count" id="kCount">0 pieces</span>
+      </summary>
+      <div class="k-body">
+        <p class="k-lede">Every prompt is a lesson. It remembers which words led to music you kept, and steers the next piece accordingly. Nothing leaves this device.</p>
+        <div class="k-stats" id="kStats"></div>
+        <div class="k-words" id="kWords"></div>
+        <div class="k-actions">
+          <button id="kToggle" class="btn ghost">Learning: on</button>
+          <button id="kExport" class="btn ghost">Export</button>
+          <button id="kImport" class="btn ghost">Import</button>
+          <button id="kReset" class="btn ghost">Forget all</button>
+          <input type="file" id="kFile" accept="application/json" hidden>
+        </div>
+      </div>
+    </details>
   </section>
 </main>
 
 <footer>
   <p>
     AUREA is open source and runs entirely on your device — no server, no account, no quota.
-    Every piece is generated fresh from a seeded music-theory engine.
+    Every piece comes from a seeded music-theory engine, and every prompt teaches it a little
+    more: the memory lives in this browser and never leaves it.
   </p>
   <p class="fine">
     Instruments synthesised in real time with the Web Audio API ·
@@ -121,6 +147,7 @@
 </footer>
 
 <script src="engine.js"></script>
+<script src="learn.js"></script>
 <script src="synth.js"></script>
 <script src="midi.js"></script>
 <script src="ui.js"></script>
